@@ -25,7 +25,8 @@ library(ggplot2)
 library(tm)
 library(dplyr)
 library(jsonlite)
-library("textcat")
+## DH: Keep your style consistent
+library(textcat)
 library(visdat)
 library(lubridate)
 library(wordcloud)
@@ -38,13 +39,23 @@ path <- here::here()
 
 
 #load labelled sentiment data
-senti <- read.csv(paste0(path, "/Data/training.1600000.processed.noemoticon.csv"))
+## DH: Break up long lines, use `here` to construct paths, and use pipes rather than nesting functions
+## DH: Compatibility note: In older versions of R (<4.0, I think?), the default for `read.csv` was to convert character vectors to factors.  This means using this code would be highly memory intensive. 
+senti <- here(path, 
+              "Data", 
+              "training.1600000.processed.noemoticon.csv") |> 
+    ## DH: For reasons described in the link below, clean_text() was failing on my machine (running R 4.3.1).  It took about an hour of work, but specifying the file encoding here seems to have solved the problem. 
+    ## DH: https://stackoverflow.com/questions/76680882/unable-to-translate-to-a-wide-string
+    read.csv(fileEncoding = 'MACROMAN')
 
+## DH: This violates immutability.  Use a pipe instead.
 #rename columns
 colnames(senti) <- c("target", "ids", "date", "flag", "user", "text")
 ```
 
 # Overview of data #
+
+<!-- DH: What's in this dataset?  Is it what we expected to see? Any notes about how it's organized, which variables we'll be working with, what we'll be doing with them?  -->
 
 ```{r}
 head(senti)
@@ -68,6 +79,7 @@ unique(senti$target)
 *Unique values in 'target' is 0 and 4, 0 = negative, 4 = positive. We will need to re-code 4 to 1 so that it is a binary variable.*
 
 ```{r}
+## DH: violates immutability
 senti$target <- ifelse(senti$target == 4, 1, 0)
 ```
 
@@ -86,13 +98,11 @@ senti_sample <- sample_n(senti, 500000)
 
 *Plot distribution of target variable in sample*
 ```{r}
-
 options(scipen = 999) #turns off scientific notation in y-axis
 ggplot(senti_sample, aes(target)) +
   geom_bar() +
-  scale_x_discrete(limits=c(0,1), labels=c("Negative","Positive")) +
+  scale_x_discrete(labels=c("Negative","Positive")) +
   labs(title="Distribution of sentiment in dataset", y = "Count", x = "Sentiment") 
-
 ```
 
 # Data preprocessing #
@@ -100,8 +110,8 @@ ggplot(senti_sample, aes(target)) +
 *Clean text*
 
 ``` {r}
+## DH: Good use of a helper function
 #create function to clean text 
-
 clean_text <- function(text) {
   text <- gsub("RT", "", text) # Remove RT
   text <- gsub("@\\w+", "", text) # Remove usernames
@@ -115,33 +125,46 @@ clean_text <- function(text) {
 }
 
 #apply to sample
+## DH: Though using it this way violates immutability
+## DH: Efficiency note: All of the functions in clean_text() are already vectorized.  Running it through `sapply()` is significantly slower, 59 sec vs. 14 sec
+# tictoc::tic()
+# foo = sapply(senti_sample$text, clean_text)
+# tictoc::toc()
+# tictoc::tic()
+# bar = clean_text(senti_sample$text)
+# tictoc::toc()
 senti_sample$text <- sapply(senti_sample$text, clean_text)
-
-
-
 ```
+<!-- DH: In an Rmd, I think that a lot of extra whitespace in a code block is distracting, but two empty lines before a subsection is helpful. -->
+
 
 *Tokenization and padding sequences*
 
 ```{r}
-
 mean(nchar(senti_sample$text)) #62 is the avg number of characters in the tweets in our dataset
 
 size <- 65 #max sequence length
-tokenizer <- text_tokenizer() %>% fit_text_tokenizer(senti_sample$text) #fitted tokenizer to dataset
-data_x <- texts_to_sequences(tokenizer, senti_sample$text) %>% pad_sequences(maxlen = size) #convert raw text to sequences of integers
+## DH: Style: Newline after pipe
+tokenizer <- text_tokenizer() %>% 
+    fit_text_tokenizer(senti_sample$text) #fitted tokenizer to dataset
+data_x <- texts_to_sequences(tokenizer, senti_sample$text) %>%
+    pad_sequences(maxlen = size) #convert raw text to sequences of integers
 data_y <- senti_sample$target #defining sentiment column
-
 ```
 
 *Split dataset into train and test set*
 
 ```{r}
+## DH: Spacing around inset binary functions
+## DH: To avoid long lines, move comments up
+## allocate 80% of data to training set
+train_size <- floor(0.8 * nrow(senti_sample)) 
+# sample rows = train_size
+train_id <- sample(c(1:nrow(data_x)), train_size) 
+#those rows not included in train_id
+test_id <- (1:nrow(data_x))[-train_id] 
 
-train_size <- floor(0.8*nrow(senti_sample)) ## allocate 80% of data to training set
-train_id <- sample(c(1:nrow(data_x)), train_size) # sample rows = train_size
-test_id <- (1:nrow(data_x))[-train_id] #those rows not included in train_id
-
+## DH: Style: Format comments consistently
 ```
 
 # Build and train model #
@@ -157,25 +180,27 @@ model <- keras_model_sequential() %>%
   layer_dense(units = 1, activation = "sigmoid")
 
 #Compile the model
-model %>% compile(
-  loss = 'binary_crossentropy',
-  optimizer = 'adam',
-  metrics = c('accuracy')
-)
+## DH: End line after pipe; then adjust indention.  Since you're only calling a single function, consider not using a pipe. 
+model %>% 
+    compile(
+        loss = 'binary_crossentropy',
+        optimizer = 'adam',
+        metrics = c('accuracy')
+    )
 
 #Train the model - this might take a long time to run. If it does, reduce sample size and rerun the previous steps.
-
-history <- model %>% fit(
-  data_x[train_id,], data_y[train_id],
-  epochs = 6,
-  batch_size = 128,
-  validation_split = 0.2
-)
+## DH: I got an error here, and I'm not going to learn how to debug tensorflow for this
+## DH: Since you save the fitted model below, consider using an option at the top of the script to load the model rather than (re)training it every time you run the script.  For the same reason, consider splitting the project into a series of scripts: (1) cleaning the sentiment data, (2) training the model, (3) cleaning the 2020 election data, (4) applying the model to the election data. 
+history <- model %>% 
+    fit(
+        data_x[train_id,], data_y[train_id],
+        epochs = 6,
+        batch_size = 128,
+        validation_split = 0.2
+    )
 
 
 plot(history)
-
-
 ```
 
 
@@ -183,14 +208,20 @@ plot(history)
 # Test model #
 
 ``` {r}
-
-test_prediction <- model %>% predict(data_x[test_id,]) #use the model to predict on test set
+## DH: End line at pipes; recommend not using a pipe here
+test_prediction <- model %>% 
+    predict(data_x[test_id,]) #use the model to predict on test set
 test_true <- data_y[test_id] #real target values in test set
 raw_value <- senti_sample[test_id,6] #tweet
 
-temp <- data.frame(prediction=test_prediction, true=test_true, raw=raw_value) #put the relevant columns together in the dataset
-temp$prediction <- ifelse(temp$prediction >.5,1, 0) #change from predicted probability to 0-1. if higher than 0.5 it is a 1.
+## DH: Move comments to avoid long lines; always put a space space after commas; spacing around =
+#put the relevant columns together in the dataset
+temp <- data.frame(prediction = test_prediction, true = test_true, raw = raw_value) 
+#change from predicted probability to 0-1. if higher than 0.5 it is a 1.
+## DH: violates immutability; do this with a pipe from the previous line
+temp$prediction <- ifelse(temp$prediction > .5, 1, 0) 
 
+## DH: similar style issues below about spacing and long lines
 mean(temp$prediction==temp$true) ## accuracy rate 
 mean(temp$true[temp$prediction > .5]==1) ## share of positives that are actually positive = 82%
 mean(temp$true[temp$prediction > .5]==0) ## share of positives that are not actually positive = 18%
@@ -201,6 +232,7 @@ mean(temp$true[temp$prediction > .5]==0) ## share of positives that are not actu
 # Save model #
 
 ```{r}
+## DH: use `here()` to build paths
 model_name <- paste0(path,"/Models/LSTM",Sys.Date(),".h5")
 save_model_hdf5(model, model_name)
 
@@ -216,17 +248,21 @@ write_json(tokenizer_config, tokenizer_file)
 *Load datasets*
 
 ```{r}
+## DH: use `here()` to build paths, avoid long lines
 trump <- read.csv(paste0(path, "/Data/elections/hashtag_donaldtrump.csv"))
 
 biden <- read.csv(paste0(path, "/Data/elections/hashtag_joebiden.csv"))
 
 ```
 
+<!-- DH: What are these datasets?  How are they structured?  Any concerns about missingness? --> 
+
 Before applying the sentiment prediction model to the datasets, I will clean and trim the data down a bit to make it less computationally intensive. 
 
 *Preprocess the datasets*
 
 ``` {r}
+## DH: put comments above; avoid unnecessary comments; `clean_text()` already vectorized; filtering by language before cleaning might be faster? 
 trump <- trump %>% 
   filter(country %in% c("United States of America", "United States")) %>% #filter down to tweets from USA
   mutate(tweet = sapply(tweet, clean_text)) %>% #clean_text using same function as before
@@ -247,15 +283,19 @@ biden <- biden %>%
 
 ### Trump data ###
 
+## DH: violates immutability
 size <- 65 #max sequence length
+## DH: end line at pipes
 tokenizer_trump <- text_tokenizer() %>% fit_text_tokenizer(trump$tweet) #fitted tokenizer to dataset
 data_x_trump <- texts_to_sequences(tokenizer_trump, trump$tweet) %>% pad_sequences(maxlen = size) #convert raw text to sequences of integers
 trump_id <- (1:nrow(data_x_trump)) #row identifiers
+## DH: violates immutability
 trump$prediction <- model %>% predict(data_x_trump[trump_id,]) #apply model to new data
 trump$sentiment <- ifelse(trump$prediction > 0.5, 1, 0) #1 or 0 
 
 ### Biden data ###
-
+## DH: same comments here
+## DH: DRY: since you're doing the exact same thing, write a helper function
 size <- 65 #max sequence length
 tokenizer_biden <- text_tokenizer() %>% fit_text_tokenizer(biden$tweet) #fitted tokenizer to dataset
 data_x_biden <- texts_to_sequences(tokenizer_biden, biden$tweet) %>% pad_sequences(maxlen = size) #convert raw text to sequences of integers
@@ -295,6 +335,7 @@ In this dataset, instead of NAs we have empty strings. So first we will convert 
 
 ```{r}
 #Convert empty strings to NA
+## DH: violates immutability; end lines at pipes; long line
 election_df <- election_df %>% mutate_all(~replace(., . == "" | . == " ", NA))
 
 ```
@@ -304,6 +345,7 @@ Visualize missingness with visdat (sample)
 
 #take a slice of the data and visualize missingness
 election_df_sample <- slice_sample(election_df, n = 10000)
+## DH: `visdata` already loaded
 visdat::vis_miss(election_df_sample)
 
 
@@ -313,6 +355,7 @@ Visualize missingness in whole df.
 ```{r}
 
 # Convert to data frame
+## DH: long line; sum() and is.na() already vectorized
 missing_df <- data.frame(column = names(election_df), missing_count = sapply(election_df, function(x) sum(is.na(x))))
 
 # Plot
@@ -332,12 +375,13 @@ We see there is most amount of missingness in the geographic variables: city, st
 ```{r}
 
 class(election_df$created_at) #character
-
+## DH: violates immutability
 election_df$created_at <- as_datetime(election_df$created_at, tz = "UTC") #convert into date-time
 
 
 # Extract day from date-time and count number of tweets per day
 tweets_daily <- election_df %>%
+    ## DH: don't introduce new dependencies in the middle of the script
   mutate(date = lubridate::date(created_at)) %>%
   group_by(date, about) %>%
   summarise(count = n()) %>%
@@ -352,11 +396,15 @@ ggplot(tweets_daily, aes(x = date, y = count, color = about)) +
 
 
 ```
+
+<!-- DH: Anything notable here? -->
+
 # Word Clouds #
 
 Note:this might take a couple of minutes to run.
 
 ```{r}
+## DH: give a text explanation of what we're doing and why, rather than an unnecessary comment
 # Separate data based on sentiment score
 positive_tweets <- election_df %>% 
   filter(sentiment == 1) %>% 
@@ -375,11 +423,12 @@ wordcloud(negative_tweets, max.words = 100, scale=c(3,0.5), colors=brewer.pal(8,
 title(main="Negative Tweets", line=-1, cex.main=2)
 ```
 
+<!-- DH: Anything notable here? -->
 
 # Distribution of positive and negative tweets #
 
 ```{r}
-
+## DH: Accidentally copied and pasted from above? 
 # Extract day from date-time and count number of tweets per day
 tweets_daily <- election_df %>%
   mutate(date = lubridate::date(created_at)) %>%
@@ -394,6 +443,7 @@ ggplot(election_df, aes(x = about, fill = factor(sentiment))) +
 
 ```
 
+<!-- DH: Anything notable here? -->
 
 # Average sentiment score daily #
 
@@ -416,7 +466,7 @@ ggplot(daily_sentiment_avg, aes(x = date, y = average_sentiment, color = about))
   theme_minimal()
 ```
 
-
+<!-- DH: Anything notable here? -->
 
 # Average sentiment score by state #
 Here, we will ignore the missing values for now.
@@ -437,6 +487,8 @@ ggplot(state_sentiment_avg, aes(x = state, y = average_sentiment, group = about,
        y = "Average Sentiment", x = "State") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
+
+<!-- DH: Anything notable here? -->
 
 # Next Steps #
 As next steps, we can look at the interaction of sentiments and engagement on twitter. Does positive/negative messaging lead to more/less engagement? Another area I will be interested to analyze in the future is some kind of geospatial analysis to track the spatial distribution of average sentiment scores for each candidate. Connecting this with electoral data can yield interesting results to see if/how expressed online sentiments translate to electoral activity.
