@@ -1,6 +1,11 @@
 ---
 title: "Sentiment Analysis of Tweets leading up to the U.S. 2020 Presidential Elections"
 author: "Amreeta P. Das"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  word_document: default
 ---
 
 # Introduction #
@@ -25,10 +30,12 @@ library(ggplot2)
 library(tm)
 library(dplyr)
 library(jsonlite)
-library("textcat")
+library(textcat)
 library(visdat)
 library(lubridate)
 library(wordcloud)
+library(maps)
+library(sf)
 ```
 
 # Load Data #
@@ -38,7 +45,10 @@ path <- here::here()
 
 
 #load labelled sentiment data
-senti <- read.csv(paste0(path, "/Data/training.1600000.processed.noemoticon.csv"))
+senti <- here(path, 
+              "Data", 
+              "training.1600000.processed.noemoticon.csv") |> 
+    read.csv(fileEncoding = 'MACROMAN')
 
 #rename columns
 colnames(senti) <- c("target", "ids", "date", "flag", "user", "text")
@@ -117,8 +127,6 @@ clean_text <- function(text) {
 #apply to sample
 senti_sample$text <- sapply(senti_sample$text, clean_text)
 
-
-
 ```
 
 *Tokenization and padding sequences*
@@ -127,7 +135,7 @@ senti_sample$text <- sapply(senti_sample$text, clean_text)
 
 mean(nchar(senti_sample$text)) #62 is the avg number of characters in the tweets in our dataset
 
-size <- 65 #max sequence length
+size <- 65 #max sequence length based on the mean
 tokenizer <- text_tokenizer() %>% fit_text_tokenizer(senti_sample$text) #fitted tokenizer to dataset
 data_x <- texts_to_sequences(tokenizer, senti_sample$text) %>% pad_sequences(maxlen = size) #convert raw text to sequences of integers
 data_y <- senti_sample$target #defining sentiment column
@@ -245,6 +253,8 @@ biden <- biden %>%
 ```{r}
 #load the model using load_model_hdf5(filepath) if needed to load again
 
+model <- load_model_hdf5(paste0(path, "/Models/LSTM2023-11-14.h5"))
+
 ### Trump data ###
 
 size <- 65 #max sequence length
@@ -290,6 +300,9 @@ ggplot(election_df, aes(about)) +
   geom_bar() +
   labs(title="Distribution of tweets in dataset", y = "Count", x = "About") 
 ```
+**Notable trends**
+We observe that in this sample, the number of tweets mentioning Trump is more than the number of tweets mentioning Biden.
+
 
 In this dataset, instead of NAs we have empty strings. So first we will convert the empty strings to NAs.
 
@@ -324,7 +337,8 @@ ggplot(missing_df, aes(x = column, y = missing_count)) +
 
 ```
 
-We see there is most amount of missingness in the geographic variables: city, state, state_code. There is also missingness in user description. We won't be using city and user description, so that is not a problem.
+**Notable trends**
+From the two visualizations above, we see there is most amount of missingness in the geographic variables: city, state, state_code. There is also missingness in user description. We won't be using city and user description, so that is not a problem.
 
 
 # Number of tweets every day #
@@ -352,7 +366,13 @@ ggplot(tweets_daily, aes(x = date, y = count, color = about)) +
 
 
 ```
+**Notable trends**
+We notice a couple of things. First, the number of tweets per day mentioning both Biden and Trump increase over time as the election on November 3 draws near. Next, the number of tweets peaks between October 15-16 and October 22-23. The former was when a debate between the Presidential candidates was supposed to happen but was ultimnately cancelled, and the latter is when the last presidential debate took place. There is also a peak in tweets about Biden on November 7, which is when it was officially announced that Biden was elected as President.
+
+
 # Word Clouds #
+
+Here, we can visualize the most commonly used worked in the positive and negative tweets to get a sense about what kind of issues are being talked about.
 
 Note:this might take a couple of minutes to run.
 
@@ -375,6 +395,10 @@ wordcloud(negative_tweets, max.words = 100, scale=c(3,0.5), colors=brewer.pal(8,
 title(main="Negative Tweets", line=-1, cex.main=2)
 ```
 
+**Notable trends**
+From the word clouds alone it is hard to ascertain what topics are being discussed. 
+1. Positive tweets word cloud: The most common words in the word cloud are "America(ns)," "maga", "Trump" and "Biden". This could be suggestive of positive tweets about Trump who is "making America great again". There are policy specific terms like "covid" included too.
+2. Negative tweets word cloud: There are policy specific terms like "covid" which in this context could indicate negative tweets about covid-19 policy in America.
 
 # Distribution of positive and negative tweets #
 
@@ -393,6 +417,8 @@ ggplot(election_df, aes(x = about, fill = factor(sentiment))) +
 
 
 ```
+**Notable trends**
+Oevrall, it appears that tweets that mentioned Trump had a higher proportion of negative sentiment than positive. Visually, negative and positive sentiments look about equally distributed for Biden.
 
 
 # Average sentiment score daily #
@@ -415,7 +441,8 @@ ggplot(daily_sentiment_avg, aes(x = date, y = average_sentiment, color = about))
   scale_y_continuous(labels = scales::percent) +
   theme_minimal()
 ```
-
+**Notable trends**
+Some trends emerge here. First, on average, the sentiment for Biden appears to be higher than that of Trump in our dataset. Second, despite there be being many peaks and valleys, the sentiment for Biden has generally gone up over-time. This is especially true after 3 Nov when the election took place, peaking around 7 Nov when the election results were announced. It could be that Biden's supporters who were not vocal on Twitter, became vocal after the announcements of results. This is also mirrored in the dip in Trump's average sentiment score around the same time. 
 
 
 # Average sentiment score by state #
@@ -437,6 +464,11 @@ ggplot(state_sentiment_avg, aes(x = state, y = average_sentiment, group = about,
        y = "Average Sentiment", x = "State") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
+**Notable trends**
+This is the most interesting for out analyses, revealing clear spatial patterns.
+For example, Trump has negative sentiment scores in California, Colorado, New York, vermont and Connecticut. These are all states that have a large urban population and that have traditionally voted Democratic. On the other hand, trump has greater sentiment scores in Wyoming, Texas, North Dakota, to name a few. These are all states that have a large rural population and that have traditionally voted Republican.This is consistent with other polls and data that has shown that Trump is more popular in more rural and conservative areas of the country.
+
+
 
 # Next Steps #
 As next steps, we can look at the interaction of sentiments and engagement on twitter. Does positive/negative messaging lead to more/less engagement? Another area I will be interested to analyze in the future is some kind of geospatial analysis to track the spatial distribution of average sentiment scores for each candidate. Connecting this with electoral data can yield interesting results to see if/how expressed online sentiments translate to electoral activity.
